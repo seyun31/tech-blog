@@ -1,5 +1,17 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { Post } from "@/lib/types";
+
+interface Comment {
+  author: string;
+  avatarUrl: string;
+  body: string;
+  createdAt: string;
+  url: string;
+}
 
 interface SidebarProps {
   posts: Post[];
@@ -7,6 +19,16 @@ interface SidebarProps {
 
 export default function Sidebar({ posts }: SidebarProps) {
   const popular = posts.slice(0, 5);
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/comments")
+      .then((res) => res.json())
+      .then((data) => setComments(data))
+      .catch(() => setComments([]))
+      .finally(() => setLoading(false));
+  }, []);
 
   return (
     <aside className="flex flex-col gap-6">
@@ -46,39 +68,38 @@ export default function Sidebar({ posts }: SidebarProps) {
       <div className="rounded-2xl bg-card p-5">
         <h3 className="mb-4 text-base font-bold text-foreground">최신 댓글</h3>
         <div className="flex flex-col gap-3">
-          <div className="rounded-xl bg-background p-3.5">
-            <div className="mb-2 flex items-center gap-2">
-              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-card text-xs">
-                🧑‍💻
-              </div>
-              <span className="text-sm font-medium">익명</span>
-            </div>
-            <p className="text-sm leading-relaxed text-muted">
-              좋은 글 감사합니다! 많은 도움이 됐어요.
-            </p>
-          </div>
-          <div className="rounded-xl bg-background p-3.5">
-            <div className="mb-2 flex items-center gap-2">
-              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-card text-xs">
-                👩‍💻
-              </div>
-              <span className="text-sm font-medium">개발자</span>
-            </div>
-            <p className="text-sm leading-relaxed text-muted">
-              코드 예제가 깔끔해서 따라하기 좋았습니다.
-            </p>
-          </div>
-          <div className="rounded-xl bg-background p-3.5">
-            <div className="mb-2 flex items-center gap-2">
-              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-card text-xs">
-                🎨
-              </div>
-              <span className="text-sm font-medium">디자이너</span>
-            </div>
-            <p className="text-sm leading-relaxed text-muted">
-              다크모드 구현 부분이 특히 유용했어요!
-            </p>
-          </div>
+          {loading ? (
+            <p className="text-sm text-muted">댓글을 불러오는 중...</p>
+          ) : comments.length === 0 ? (
+            <p className="text-sm text-muted">아직 댓글이 없습니다.</p>
+          ) : (
+            comments.map((comment, index) => (
+              <a
+                key={index}
+                href={comment.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-xl bg-background p-3.5 transition-colors hover:bg-muted/10"
+              >
+                <div className="mb-2 flex items-center gap-2">
+                  <Image
+                    src={comment.avatarUrl}
+                    alt={comment.author}
+                    width={28}
+                    height={28}
+                    className="shrink-0 rounded-full"
+                  />
+                  <span className="text-sm font-medium">{comment.author}</span>
+                  <span className="ml-auto text-xs text-muted">
+                    {new Date(comment.createdAt).toLocaleDateString("ko-KR")}
+                  </span>
+                </div>
+                <p className="text-sm leading-relaxed text-muted">
+                  {comment.body}
+                </p>
+              </a>
+            ))
+          )}
         </div>
       </div>
     </aside>

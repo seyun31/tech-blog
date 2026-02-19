@@ -10,7 +10,11 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+
 export const metadata: Metadata = {
+  icons: {
+    icon: "/favicon.svg",
+  },
   title: {
     default: "seyun.dev",
     template: "%s | seyun.dev",

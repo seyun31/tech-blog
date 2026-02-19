@@ -49,13 +49,13 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
 
   return (
     <article className="flex flex-col gap-6">
-      <header className="flex flex-col gap-3 border-b border-border pb-6">
-        <span className="text-sm font-medium text-accent">&gt; {category}</span>
-        <h1 className="text-3xl font-bold leading-tight tracking-tight">
+      {/* 헤더 */}
+      <header className="flex flex-col gap-4 mt-10">
+        <h1 className="text-4xl font-bold leading-tight tracking-tight sm:text-5xl">
           {title}
         </h1>
-        <div className="flex items-center gap-3 text-sm text-muted">
-          <time dateTime={date}>
+        <div className="flex flex-col gap-1 text-sm">
+          <time className="text-muted" dateTime={date}>
             {new Date(date).toLocaleDateString("ko-KR", {
               year: "numeric",
               month: "long",
@@ -63,18 +63,6 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
             })}
           </time>
         </div>
-        {tags && tags.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {tags.map((tag) => (
-              <span
-                key={tag}
-                className="rounded-md bg-card px-2 py-0.5 text-xs text-muted"
-              >
-                {tag}
-              </span>
-            ))}
-          </div>
-        )}
       </header>
       <MdxContent source={post.content} />
 

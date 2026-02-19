@@ -19,9 +19,9 @@ export default function Giscus() {
     const script = document.createElement("script");
     script.src = "https://giscus.app/client.js";
     script.setAttribute("data-repo", "seyun31/tech-blog");
-    script.setAttribute("data-repo-id", "");
-    script.setAttribute("data-category", "Comments");
-    script.setAttribute("data-category-id", "");
+    script.setAttribute("data-repo-id", "R_kgDORTl3cg");
+    script.setAttribute("data-category", "Announcements");
+    script.setAttribute("data-category-id", "DIC_kwDORTl3cs4C2wb0");
     script.setAttribute("data-mapping", "pathname");
     script.setAttribute("data-strict", "0");
     script.setAttribute("data-reactions-enabled", "1");

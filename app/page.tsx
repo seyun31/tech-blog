@@ -9,16 +9,23 @@ import { Post } from "@/lib/types";
 
 const CATEGORIES = ["All", "Develop", "Design", "CS", "Etc"];
 
+type DiscussionStats = Record<string, { reactions: number; comments: number }>;
+
 export default function Home() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [selected, setSelected] = useState("All");
   const [activeSlide, setActiveSlide] = useState(0);
+  const [stats, setStats] = useState<DiscussionStats>({});
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     fetch("/api/posts")
       .then((res) => res.json())
       .then((data) => setPosts(data));
+    fetch("/api/discussions")
+      .then((res) => res.json())
+      .then((data) => setStats(data))
+      .catch(() => setStats({}));
   }, []);
 
   const featuredPosts = posts.slice(0, 3);
@@ -27,7 +34,7 @@ export default function Home() {
     if (intervalRef.current) clearInterval(intervalRef.current);
     intervalRef.current = setInterval(() => {
       setActiveSlide((prev) => (prev + 1) % Math.max(featuredPosts.length, 1));
-    }, 1500);
+    }, 2000);
   }, [featuredPosts.length]);
 
   useEffect(() => {
@@ -53,39 +60,48 @@ export default function Home() {
   return (
     <div className="flex flex-col gap-10">
       {/* 메인 배너 부분(최신 3개 글) */}
-      {current && (
-        <div>
-          <Link href={`/blog/${current.slug}`} className="group block">
-            <section className="relative flex min-h-[200px] flex-col justify-center gap-4 rounded-2xl bg-card p-6 transition-colors hover:bg-border/50 sm:p-8">
-              <span className="text-sm font-medium text-accent">
-                {current.frontmatter.category}
-              </span>
-              <h1 className="text-2xl font-bold leading-tight tracking-tight sm:text-3xl">
-                {current.frontmatter.title}
-              </h1>
-              <p className="text-[15px] leading-relaxed text-muted sm:text-base">
-                {current.frontmatter.description}
-              </p>
-              <div className="flex items-center gap-2 text-sm text-muted">
-                <time dateTime={current.frontmatter.date}>
-                  {new Date(current.frontmatter.date).toLocaleDateString(
-                    "ko-KR",
-                    {
-                      year: "numeric",
-                      month: "long",
-                      day: "numeric",
-                    }
-                  )}
-                </time>
-                {current.frontmatter.tags?.length > 0 && (
-                  <>
-                    <span>·</span>
-                    <span>{current.frontmatter.tags.join(", ")}</span>
-                  </>
-                )}
+      {featuredPosts.length > 0 && (
+        <div className="overflow-hidden">
+          <div
+            className="flex transition-transform duration-500 ease-in-out"
+            style={{ transform: `translateX(-${activeSlide * 100}%)` }}
+          >
+            {featuredPosts.map((post) => (
+              <div key={post.slug} className="w-full flex-shrink-0 px-1">
+                <Link href={`/blog/${post.slug}`} className="group block">
+                  <section className="relative flex min-h-[200px] flex-col justify-center gap-4 rounded-2xl bg-card p-6 transition-colors hover:bg-border/50 sm:p-8">
+                    <span className="text-sm font-medium text-accent">
+                      {post.frontmatter.category}
+                    </span>
+                    <h1 className="text-2xl font-bold leading-tight tracking-tight sm:text-3xl">
+                      {post.frontmatter.title}
+                    </h1>
+                    <p className="text-[15px] leading-relaxed text-muted sm:text-base">
+                      {post.frontmatter.description}
+                    </p>
+                    <div className="flex items-center gap-2 text-sm text-muted">
+                      <time dateTime={post.frontmatter.date}>
+                        {new Date(post.frontmatter.date).toLocaleDateString(
+                          "ko-KR",
+                          {
+                            year: "numeric",
+                            month: "long",
+                            day: "numeric",
+                          }
+                        )}
+                      </time>
+                      {post.frontmatter.tags?.length > 0 && (
+                        <>
+                          <span>·</span>
+                          <span>{post.frontmatter.tags.join(", ")}</span>
+                        </>
+                      )}
+                    </div>
+                  </section>
+                </Link>
               </div>
-            </section>
-          </Link>
+            ))}
+          </div>
           {featuredPosts.length > 1 && (
             <div className="mt-3 flex justify-center gap-1.5">
               {featuredPosts.map((_, index) => (
@@ -123,12 +139,14 @@ export default function Home() {
             />
           </div>
 
-          <div className="flex flex-col">
+          <div className="flex flex-col [&>*:last-child_article]:border-b-0">
             {filtered.map((post) => (
               <PostCard
                 key={post.slug}
                 slug={post.slug}
                 frontmatter={post.frontmatter}
+                reactions={stats[post.slug]?.reactions ?? 0}
+                comments={stats[post.slug]?.comments ?? 0}
               />
             ))}
           </div>

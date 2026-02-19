@@ -12,7 +12,7 @@ export default function Footer() {
             rel="noopener noreferrer"
             className="underline underline-offset-2 hover:text-foreground"
           >
-            seyun
+            seyun31
           </Link>
           . All rights reserved.
         </p>
