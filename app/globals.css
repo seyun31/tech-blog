@@ -53,8 +53,9 @@ body {
   --tw-prose-quotes: var(--muted);
   --tw-prose-quote-borders: var(--border);
   color: var(--foreground);
-  max-width: 65ch;
-  line-height: 1.75;
+  max-width: none;
+  font-size: 17px;
+  line-height: 1.5;
 }
 
 .prose h1 {
@@ -66,7 +67,7 @@ body {
 }
 
 .prose h2 {
-  font-size: 1.5rem;
+  font-size: 1.8rem;
   font-weight: 600;
   margin-top: 1.75rem;
   margin-bottom: 0.75rem;
@@ -97,7 +98,7 @@ body {
 }
 
 .prose strong {
-  font-weight: 600;
+  font-weight: 700 !important;
 }
 
 .prose ul {
@@ -123,7 +124,7 @@ body {
   border-left: 3px solid var(--border);
   padding-left: 1rem;
   color: var(--muted);
-  font-style: italic;
+  font-style: normal !important;
   margin-top: 1rem;
   margin-bottom: 1rem;
 }

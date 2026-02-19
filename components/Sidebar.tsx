@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Post } from "@/lib/types";
+import { CommentsSkeleton } from "@/components/Skeleton";
 
 interface Comment {
   author: string;
@@ -69,7 +70,7 @@ export default function Sidebar({ posts }: SidebarProps) {
         <h3 className="mb-4 text-base font-bold text-foreground">최신 댓글</h3>
         <div className="flex flex-col gap-3">
           {loading ? (
-            <p className="text-sm text-muted">댓글을 불러오는 중...</p>
+            <CommentsSkeleton />
           ) : comments.length === 0 ? (
             <p className="text-sm text-muted">아직 댓글이 없습니다.</p>
           ) : (

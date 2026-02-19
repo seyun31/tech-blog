@@ -67,7 +67,7 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
       <MdxContent source={post.content} />
 
       {/* 공유하기 */}
-      <div className="pt-4">
+      <div className="pt-16">
         <ShareButton />
       </div>
 

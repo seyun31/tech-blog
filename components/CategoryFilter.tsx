@@ -17,7 +17,7 @@ export default function CategoryFilter({
         <button
           key={category}
           onClick={() => onSelect(category)}
-          className={`relative px-4 py-2.5 text-sm transition-colors ${
+          className={`relative cursor-pointer px-4 py-2.5 text-sm transition-colors ${
             selected === category
               ? "font-semibold text-foreground"
               : "text-muted hover:text-foreground"
