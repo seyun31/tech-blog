@@ -2,7 +2,7 @@ import { MetadataRoute } from "next";
 import { getAllSlugs } from "@/lib/posts";
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const baseUrl = "https://seyun.dev";
+  const baseUrl = "https://www.seyunlimdev.site";
   const slugs = getAllSlugs();
 
   const postUrls = slugs.map((slug) => ({
