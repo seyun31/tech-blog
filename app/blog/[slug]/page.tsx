@@ -1,9 +1,11 @@
 import { notFound } from "next/navigation";
 import { Metadata } from "next";
 import { getPostBySlug, getAllSlugs } from "@/lib/posts";
+import { extractToc } from "@/lib/toc";
 import MdxContent from "@/components/MdxContent";
 import Giscus from "@/components/Giscus";
 import ShareButton from "@/components/ShareButton";
+import TableOfContents from "@/components/TableOfContents";
 
 interface BlogPostPageProps {
   params: Promise<{ slug: string }>;
@@ -65,6 +67,7 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
         </div>
       </header>
       <MdxContent source={post.content} />
+      <TableOfContents items={extractToc(post.content)} />
 
       {/* 공유하기 */}
       <div className="pt-16">

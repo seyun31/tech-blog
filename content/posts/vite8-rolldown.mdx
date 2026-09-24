@@ -1,0 +1,322 @@
+---
+title: "Vite는 왜 번들러를 두 개 썼고, 왜 하나로 합쳤을까"
+description: "esbuild와 Rollup을 함께 쓰던 Vite가 Rolldown과 Oxc로 도구를 하나로 합친 이유를 dev/prod 불일치 재현으로 살펴보고, 실제 프로젝트를 마이그레이션해 빌드 시간이 어디에 쓰이는지 구간별로 뜯어봅니다."
+date: "2026-09-24"
+category: "Engineering"
+tags: ["Vite", "Build"]
+thumbnail: ""
+---
+
+## 🪄 Vite는 왜 번들러가 두 개였나
+
+두 번들러는 각자 **서로 다른 문제**를 풀기 위해 선택됐다.
+
+**dev → esbuild**
+
+- Vite의 dev 서버는 **unbundled** 방식이다. 브라우저의 native ESM으로 파일을 하나씩 보내고, 요청이 들어온 파일만 그때그때 변환한다.
+- 그래서 **파일 단위 변환 속도**가 전부였고, Go로 작성된 esbuild가 이 역할을 맡았다.
+  - 의존성 pre-bundling (`node_modules`의 CJS 패키지를 ESM으로 묶기)
+  - TS/JSX 변환
+
+**build → Rollup**
+
+- 배포 환경에서 수백 개 파일을 따로 요청하면 **네트워크 요청 폭포(waterfall)** 가 생긴다.
+- tree-shaking, chunk 분할 같은 **번들 품질**이 중요했고, 당시 플러그인 API와 chunk 분할이 가장 성숙했던 Rollup을 택했다.
+
+```text
+            ┌─ dev ──▶ esbuild (빠른 변환) ──▶ 브라우저 native ESM
+  소스 코드 ─┤
+            └─ build ─▶ Rollup (품질 좋은 번들) ──▶ dist/
+```
+
+각자의 강점만 골라 쓴, **당시로선 합리적인 선택**이었다. 문제는 같은 코드가 두 개의 서로 다른 도구를 지나간다는 점이었다.
+
+2026년 3월에 나온 Vite 8은 이 두 도구를 Rust 기반의 **Rolldown(번들러)과 Oxc(컴파일러)** 로 대체했다. Vite 2 이후 가장 큰 아키텍처 변화다.
+
+---
+
+## 💥 두 번들러의 대가: dev/prod 불일치
+
+Vite 공식 발표도 이 구조의 비용을 직접 인정한다.
+
+- 변환 파이프라인이 두 개라서 **플러그인 시스템도 두 개**였다.
+- 둘을 맞추기 위한 **glue code**가 계속 늘어났다.
+- 모듈 처리 방식이 조금씩 달라서 생기는 **edge case가 쌓였고**, 한쪽을 고치면 다른 쪽이 어긋날 위험이 있었다.
+
+**CJS default import는 dev와 build에서 다른 값을 받았다**
+
+ESM 코드에서 CJS 패키지를 `import x from "pkg"`로 가져오면, 번들러는 `x`에 **무엇을 넣을지** 골라야 한다.
+
+```js
+// node_modules/cjs-pkg/index.js — TS/Babel로 컴파일된 흔한 모양의 CJS 패키지
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.default = function greet() {
+  return "hello";
+};
+```
+
+- 후보 1: `module.exports` → `{ default: [Function] }` **객체**
+- 후보 2: `module.exports.default` → `greet` **함수**
+
+Vite 7은 이 선택 규칙이 dev(esbuild)와 build(Rollup)에서 달랐다. 차이가 드러나는 건 **importer가 의존성 안에 있는 `.mjs` 파일일 때**다.
+
+```js
+// node_modules/some-lib/index.mjs — 의존성 안의 .mjs 파일이 CJS 패키지를 import
+import greet from "cjs-pkg";
+export { greet };
+```
+
+- **dev:** `some-lib`은 의존성 pre-bundling 대상이라 esbuild가 `cjs-pkg`와 함께 묶는다. 이때 importer가 `.mjs`면 **Node 규칙**을 적용해 `module.exports`(객체)를 넣는다.
+- **build:** Rollup의 commonjs 플러그인은 importer를 보지 않고 `__esModule` 표시만 확인해 `module.exports.default`(함수)를 넣는다.
+
+### 직접 재현해보니 라이브러리 안에서 값이 갈렸다
+
+가짜 CJS 패키지와 이를 import하는 래퍼 패키지를 만들고, 브라우저에서 import한 값이 함수인지 객체인지 확인했다.
+
+| importer | Vite 7 dev | Vite 7 build | Vite 8 dev | Vite 8 build |
+| --- | --- | --- | --- | --- |
+| ① 의존성 안의 `.mjs` 파일 | 객체 | **함수** | 객체 | 객체 |
+| ② 의존성 안의 `.js` 파일 (`"type": "module"` 패키지) | 함수 | 함수 | **객체** | **객체** |
+| ③ 내 코드 (`"type": "module"` 앱) | 함수 | 함수 | **객체** | **객체** |
+
+①이 Vite 7의 불일치다. 같은 라이브러리가 **로컬에선 객체, 배포 후엔 함수**를 받는다. 이 라이브러리가 `greet()`를 호출한다면 dev에서만 `greet is not a function`이 터지고, 반대 방향이었다면 **배포 후에만** 터진다. 게다가 문제 코드가 내 코드가 아니라 `node_modules` 안에 있어서 원인을 찾기도 어렵다.
+
+실제 번들 결과물을 열어보면 차이가 그대로 보인다.
+
+```js
+// Vite 7 dev — esbuild pre-bundle 결과. 두 번째 인자 1 = "Node 규칙으로 처리"
+var import_cjs_pkg = __toESM(require_cjs_pkg(), 1);
+
+// Vite 7 build — Rollup commonjs 헬퍼. __esModule만 보고 .default를 꺼냄
+function getDefaultExportFromCjs(x) {
+  return x && x.__esModule && Object.prototype.hasOwnProperty.call(x, "default") ? x.default : x;
+}
+```
+
+### Vite 8은 Node 규칙 하나로 통일했다
+
+Vite 8은 dev와 build 구분 없이 한 가지 규칙으로 판단한다.
+
+- importer가 `.mjs`/`.mts`이거나, importer에서 가장 가까운 `package.json`에 `"type": "module"`이 있거나, CJS 모듈에 `__esModule: true`가 없으면 → `default` = `module.exports`
+- 그 외 → `default` = `module.exports.default`
+
+표의 Vite 8 칸처럼 dev와 build가 항상 같아진다. 그런데 **②, ③을 보면 공짜 통일은 아니다.**
+
+- Node.js의 ESM ↔ CJS 규칙에 맞추면서, `"type": "module"` 쪽에서 `__esModule` CJS 패키지를 default import하면 Vite 7에선 함수였던 값이 Vite 8에선 **dev와 build 모두 객체**가 된다.
+- ③ 내 코드라면 import 방식을 고치면 되지만, ② **의존성 안에서** 바뀌면 내가 직접 고칠 수 없다. `"type": "module"`로 배포되는 라이브러리가 늘고 있어서 점점 더 자주 마주칠 경우다.
+- 공식 문서는 Vite 7 dev에서 `"type": "module"` 패키지도 Node 규칙을 따랐다고 설명하지만, 직접 해보니 ②는 `.mjs`와 달리 esbuild가 Node 규칙을 적용하지 않았다.
+
+기존 동작이 급히 필요하면 `legacy.inconsistentCjsInterop: true`로 임시 복구할 수 있다(직접 켜보니 build 결과가 Vite 7과 똑같이 돌아왔다). 다만 이름 그대로 **"일관되지 않은" 동작을 되살리는** deprecated 옵션이라, 영향받는 패키지를 찾아 제보하거나 고치는 게 정답이다.
+
+> 개발 환경에서 확인한 동작이 배포 환경의 동작을 보장하지 못한다. 번들러가 두 개일 때의 진짜 비용은 이것이었다.
+
+---
+
+## 🔧 Rolldown과 Oxc: 도구 체인 통합
+
+esbuild와 Rollup이 하던 일을 **Rolldown(번들링)과 Oxc(파싱·변환·minify)** 가 나눠 맡는다. Rolldown은 Rollup과 **호환되는** 플러그인 API를 가진 Rust 번들러이고, Oxc는 Rolldown **안에서** 쓰이는 컴파일러다.
+
+```text
+  소스 코드 ──▶ Rolldown [ Oxc 파싱·변환 ──▶ 번들링 ──▶ Oxc minify ] ──▶ 결과물
+                                              └──▶ Lightning CSS (CSS minify)
+```
+
+- dev의 의존성 pre-bundling과 build 번들링을 **같은 엔진**이 맡으면서, 파싱부터 minify까지 도구 간 동작 차이가 줄었다.
+- 기본값도 바뀌었다.
+  - JS 변환·minify: esbuild → **Oxc**
+  - CSS minify: esbuild → **Lightning CSS**
+- 설정 이름도 따라 바뀌었다(호환 레이어가 자동 변환해주지만 deprecated다).
+  - `build.rollupOptions` → `build.rolldownOptions`
+  - `esbuild` → `oxc`
+- 번들러만 바뀐 게 아니다. Vite 8은 resolve, transform, json, import-glob, 빌드 리포터 같은 **Vite 내장 플러그인도 Rolldown의 Rust 구현**(`rolldown/experimental`)을 불러다 쓴다.
+
+---
+
+## 📊 RealMatch로 측정해보기
+
+팀 프로젝트였던 RealMatch를 Vite 7에서 8로 올리자 프로덕션 빌드가 **3.13초 → 1.95초**로 줄었다. **약 38% 단축, 1.6배**다.
+
+공식 발표의 "최대 10~30배"와는 거리가 먼 숫자지만, 같은 발표에 실린 실사용 사례(Ramp 57%, Mercedes-Benz.io 38%, Beehiiv 64% 단축)와는 같은 범위다. 10~30배는 Linear(46초 → 6초) 같은 대형 코드베이스 이야기다.
+
+대상은 React Router 프레임워크 모드(SPA) + Tailwind v4 + PWA 구성에, 빌드 시 모듈 약 950개를 변환하는 중간 규모 프로젝트다.
+
+**같은 조건에서 번갈아 측정했다**
+
+- Apple M5 Pro, Node 24.14.1, pnpm 10.33
+- 네 조건을 git worktree로 나눠 **한 번의 실행에서 번갈아(interleaved)** 측정했다. 시점에 따른 편차를 없애기 위해서다.
+- 매 회 `build/`와 `node_modules/.vite`를 지우고 빌드했다. 단, OS 파일 캐시는 warm 상태다.
+
+```bash
+hyperfine --warmup 2 --runs 15 \
+  --prepare 'rm -rf {dir}/build {dir}/node_modules/.vite' \
+  -L dir vite7,vite7-plugins,vite8,vite8-oxc \
+  'cd {dir} && pnpm exec react-router build'
+```
+
+**버전만 올려도 1초가 줄었다**
+
+| 조건 | 빌드 시간 (15회) | Vite 7 대비 |
+| --- | --- | --- |
+| ① Vite 7.3.1 (원본) | 3.13초 ± 0.12 | 기준 |
+| ② Vite 7.3.1 + 플러그인만 업그레이드 | 3.05초 ± 0.15 | 차이 없음 |
+| ③ Vite 8.3.1, 설정 그대로 | 2.05초 ± 0.07 | 1.53배 |
+| ④ Vite 8.3.1, minify 기본값(Oxc) | **1.95초 ± 0.08** | **1.61배** |
+
+Welch t-test 기준으로 ①·② 차이(79ms)는 유의하지 않고(p = 0.12), ③·④ 차이(99ms)는 유의하다(p < 0.001).
+
+- **②를 따로 잰 이유:** Vite 8을 쓰려면 플러그인 3개도 버전을 올려야 했다. ①과 ②가 같다는 걸 확인해야 ③·④의 개선을 **Vite 8의 효과**라고 말할 수 있다.
+- **③과 ④를 나눈 이유:** 원래 설정에 `build.minify: "esbuild"`가 명시돼 있어서, 버전만 올리면 minify는 계속 esbuild가 맡는다.
+
+| 조건 | JS chunk 수 | JS 크기 (gzip) |
+| --- | --- | --- |
+| ① Vite 7 | 129 | 472.7 kB |
+| ③ Vite 8 + esbuild minify | 129 | 472.4 kB |
+| ④ Vite 8 + Oxc minify | 129 | **461.3 kB (−2.4%)** |
+
+속도 개선의 대부분(①→③, 약 1.0초)은 버전만 올려도 얻는다. minify까지 Oxc로 넘기면 빌드 0.1초와 번들 크기 2.4%를 **추가로** 얻는다.
+
+---
+
+## 🔍 회고: 빌드 시간은 어디에 쓰이고 있었나
+
+처음엔 "프로젝트가 작아서 1.6배밖에 안 나왔다"고 생각했다. 그런데 빌드 로그에 타임스탬프를 붙여 **구간별로** 쪼개보니 다른 답이 나왔다.
+
+| 구간 | Vite 7 | Vite 8 (Oxc) | 변화 |
+| --- | --- | --- | --- |
+| **변환** (transform) | **1,343ms** | **430ms** | **3.1배** |
+| **chunk 생성·minify·쓰기** | **173ms** | **107ms** | **1.6배** |
+| **server 빌드** (SPA `index.html`) | **170ms** | **150ms** | 비슷 |
+| CLI 시작·설정·라우트 분석 | 456ms | 510ms | 오히려 느림 |
+| gzip 크기 계산 (리포트용) | 387ms | 304ms | 비슷 |
+| PWA 서비스 워커 생성 등 | 524ms | 557ms | 그대로 |
+| 종료 | 31ms | 26ms | 그대로 |
+| **합계** | **3,083ms** | **2,083ms** | 1.5배 |
+
+> 10회 interleaved 평균이다. hyperfine과 달리 `pnpm exec` 없이 CLI를 직접 실행했고, 로그 출력 시점으로 구간을 나눈 **근사값**이라 절대값보다 **비율**을 봐야 한다. 구간 경계는 `vite v… building` → `modules transformed` → `computing gzip size` → `built in` 로그다.
+
+표를 두 덩어리로 묶으면 결론이 선명해진다.
+
+- **번들 결과물을 만드는 작업**(굵은 세 줄)은 1,686ms → 687ms로 **약 2.5배** 빨라졌다.
+- **그 밖의 작업**(나머지 네 줄)은 1,398ms → 1,397ms로 **그대로**다.
+- 그래서 Vite 8에서는 빌드 시간의 **약 67%가 결과물을 만드는 일 밖에서** 쓰이고 있다.
+
+> 번들러가 느린 게 아니었다. 번들러가 빨라지자, 빌드 시간이 원래 어디에 쓰이고 있었는지가 드러난 것이다.
+
+### 남은 시간은 리포트, PWA, 프레임워크가 쓰고 있었다
+
+- **gzip 크기 계산:** 터미널에 `gzip: 69.18 kB`를 찍어주려고 모든 chunk를 **실제로 압축**해본다. Vite 8에선 이 리포터도 Rolldown의 Rust 플러그인으로 돌지만, 결과물에는 아무 영향이 없는 **리포트용 작업**이 빌드 시간의 약 15%를 차지한다.
+- **PWA 서비스 워커 생성:** workbox가 precache 목록 137개를 만들고 `sw.js`를 생성하는 별도 단계다.
+- **CLI 시작·설정·라우트 분석:** React Router는 빌드 전에 설정 로딩과 라우트 분석을 위해 내부적으로 Vite 인스턴스를 띄운다. 설정을 읽을 때마다 찍히는 경고가 **빌드 시작 전에만 7번** 나온다.
+- **오히려 느려진 이유 하나:** `@react-router/dev`가 쓰는 `vite-node`가 아직 Vite 7에 의존해서, Vite 8 빌드 프로세스 안에서 **Vite 7도 함께 로드된다**. 이 로드에만 약 58ms가 들어서 증가분(약 54ms)을 대부분 설명한다.
+
+### 설정 한 줄로 0.4초를 더 줄였다
+
+리포트용 gzip 계산은 옵션 한 줄로 끌 수 있다.
+
+```ts
+// vite.config.ts
+export default defineConfig({
+  build: {
+    reportCompressedSize: false,
+  },
+});
+```
+
+④와 번갈아 20회씩 측정하니 **2.03초 → 1.61초**였다(p < 0.001). Vite 7 → 8 업그레이드로 줄어든 시간(약 1.2초)의 3분의 1을 **설정 한 줄로** 더 줄인 셈이다. 절감분(약 0.42초)이 gzip 구간(약 0.3초)보다 큰 이유까지는 확인하지 못했다. 번들 크기를 CI의 다른 도구로 추적하고 있다면 매 빌드마다 계산할 이유가 없다.
+
+**변환 3.1배가 전부 번들러 덕분은 아니다**
+
+- Vite 8은 번들러뿐 아니라 resolve, transform 같은 **내장 플러그인도 Rust 구현**으로 바꿨다. 3.1배 중 얼마가 번들러 교체 덕분이고 얼마가 내장 플러그인 네이티브화 덕분인지는 이 측정만으로 나눌 수 없다.
+- 변환한 모듈 수도 972개(Vite 7) → 943개(Vite 8)로 조금 달라서, 완전히 같은 작업을 비교한 건 아니다.
+
+### 병목은 사라지지 않고 옮겨간다
+
+- 벤치마크 수치 **하나만** 봤다면 "기대보다 덜 빨라졌다"로 끝났을 것이다. 구간을 쪼개야 **병목이 어디로 옮겨갔는지** 보인다.
+- 번들러 교체는 빌드 파이프라인의 **한 구간**을 바꾸는 일이다. 그 구간이 전체의 대부분인 대형 코드베이스일수록 배수가 커진다.
+- 병목 하나를 없애면 다음 병목이 드러난다. 이제 RealMatch 빌드에서 가장 비싼 건 번들링이 아니라 **리포트, PWA, 프레임워크의 사전 작업**이다.
+
+---
+
+## 🛠️ 마이그레이션 실전 기록
+
+**플러그인을 먼저 올리고, Vite는 나중에 올렸다**
+
+벤치마크의 ②처럼 Vite 7 상태에서 **플러그인만 먼저** 올리고 빌드·측정한 뒤, 그다음에 Vite를 올렸다. 이렇게 하면 문제가 생겼을 때 그게 플러그인 업그레이드 때문인지 Vite 8 때문인지 나눠볼 수 있다. 공식 가이드는 한 단계 더 나눠서, Vite 7에서 `rolldown-vite` 패키지로 **번들러만** 먼저 바꿔보는 방법도 안내한다.
+
+| 플러그인 | 기존 | Vite 8 peer 지원 시작 버전 |
+| --- | --- | --- |
+| `@react-router/dev` | 7.13.0 | 7.14.0 |
+| `vite-plugin-pwa` | 1.2.0 | 1.3.0 |
+| `@tailwindcss/vite` | 4.1.18 | 4.2.2 |
+
+그 뒤 Vite를 올리자 **코드 수정 없이 빌드가 통과**했다. 대신 새로 보이는 것들이 있었다.
+
+- **`minify: "esbuild"`가 동작한 건 운이 좋았던 것이다:** Vite 8에서 esbuild는 **optional peer dependency**다. RealMatch는 다른 패키지(`tsx`)를 통해 esbuild가 간접 설치돼 있어서 동작했을 뿐, esbuild가 없는 프로젝트라면 이 설정에서 에러가 난다. 이참에 설정을 지우고 Oxc 기본값으로 가는 게 낫다.
+- **`__dirname` 경고:** 앞으로 기본값이 될 native config loader(`configLoader: 'native'`)는 설정 파일의 `__dirname`을 지원하지 않는다. `import.meta.dirname`으로 바꾸라고 권장한다.
+- **`envFile` deprecated 경고:** 설정에 없는 옵션이다. React Router가 내부 Vite 인스턴스를 만들 때 넘기는 옵션이라 빌드 한 번에 9번 찍힌다.
+- **chunk 크기 경고 문구 변경:** `manualChunks` 대신 `build.rolldownOptions.output.codeSplitting`을 안내한다.
+- 쓰지 않던 `@vitejs/plugin-react` 5.x가 peer 경고를 띄웠다. 사용하지 않는 의존성을 정리할 계기가 됐다.
+
+**공식 체크리스트에서 눈여겨볼 것**
+
+- object 형태의 `manualChunks`는 **제거**됐고, 함수 형태도 deprecated다. Rolldown의 `codeSplitting`으로 옮겨야 한다.
+- native decorator lowering을 지원하지 않고(Babel/SWC 플러그인으로 우회), esbuild의 property mangling도 지원하지 않는다.
+- 기본 `build.target`이 올라갔다(Chrome 107 → 111, Safari 16.0 → 16.4 등). RealMatch는 `target: "esnext"`를 명시하고 있어서 영향이 없었다.
+
+---
+
+## 🔄 반전: 엔진은 하나가 됐지만 경로는 아직 둘
+
+Rolldown이 dev에서 맡는 건 **의존성 pre-bundling**까지다. 내 소스 코드는 여전히 파일을 하나씩 변환해서 보내는 unbundled 방식이라, dev와 build는 **엔진과 규칙은 같아졌지만 경로는 아직 다르다**. 파일 단위로 서빙하느냐 chunk로 묶느냐에서 오는 차이는 여전히 생길 수 있다.
+
+그리고 unbundled dev에도 한계가 있다. 프로젝트가 커지면 페이지 하나를 열 때 **수천 개의 모듈 요청**이 발생하고, 이게 오히려 dev 서버 시작과 새로고침을 느리게 만든다.
+
+그래서 Vite 8.1에서 **bundled dev mode**(구 Full Bundle Mode)가 실험 기능으로 나왔다.
+
+```ts
+// vite.config.ts
+export default defineConfig({
+  experimental: {
+    bundledDev: true,
+  },
+});
+```
+
+- 공식 발표 기준으로 1만 개 컴포넌트 앱에서 시작은 약 15배, 전체 새로고침은 약 10배 빨라졌다.
+- 다만 아직 브라우저 측·기본 플러그인 위주라 **서드파티 플러그인은 동작하지 않을 수 있다.**
+
+> "번들링하지 않아서 빠르다"던 Vite가, 번들러가 충분히 빨라지자 dev에서도 다시 번들링을 택하는 아이러니다.
+
+처음에 dev에서 번들링을 버린 이유는 **번들러가 느려서**였다. 그 전제가 Rust 번들러로 깨지자, unbundled 방식의 요청 수 문제가 더 큰 비용이 된 것이다. 엔진을 하나로 합친 Vite 8의 다음 단계는 **경로까지 하나로** 합치는 것이다.
+
+---
+
+## 🤔 트레이드오프
+
+공짜는 아니다.
+
+- **CJS interop 변경은 breaking이다:** 일관성을 위해 Node 규칙을 택하면서, `"type": "module"` 쪽에서 `__esModule` CJS 패키지를 default import한 값이 바뀐다. 특히 **의존성 안에서** 바뀌는 경우가 문제다. 빌드가 통과해도 **런타임에서** 터질 수 있어서, 업그레이드 후 실제 화면을 확인해야 한다.
+- **설치 크기가 약 15MB 늘었다:** lightningcss가 일반 의존성이 되면서 약 10MB, Rolldown 바이너리가 약 5MB다.
+- **Oxc가 아직 esbuild의 모든 기능을 대체하진 못한다:** decorator lowering, property mangling이 그렇다.
+- **플러그인 호환성:** Rollup 호환 API지만 일부 훅과 출력 포맷은 지원하지 않는다(마이그레이션 가이드 참고). 프레임워크 플러그인은 RealMatch의 `vite-node`처럼 내부에서 이전 버전 Vite를 끌고 오기도 한다.
+
+---
+
+## 📌 정리
+
+- Vite가 번들러를 두 개 쓴 건 **dev는 변환 속도, build는 번들 품질**이라는 서로 다른 요구 때문이었다.
+- 그 대가는 **같은 코드가 dev와 build에서 다르게 동작할 수 있다**는 것이었다. 의존성 안의 CJS `default` import가 대표 사례다.
+- Vite 8은 Rolldown과 Oxc로 **엔진과 규칙을 하나로** 맞췄다. 다만 그 통일은 Node 규칙으로의 breaking change를 동반한다.
+- 실제 프로젝트에서 번들 결과물을 만드는 구간은 **약 2.5배** 빨라졌지만 전체는 **1.6배**였다. 남은 시간의 약 3분의 2는 **리포트, PWA, 프레임워크의 사전 작업**에 쓰이고 있었다.
+- dev 경로는 아직 unbundled지만, bundled dev mode로 **경로까지 하나로 수렴**하는 방향으로 가고 있다.
+> 본문의 측정은 Vite 7.3.1 → 8.3.1, React Router 7.14 기준입니다.
+
+---
+
+### 참고 자료
+
+- [Vite 공식 블로그 — Vite 8.0 is out!](https://vite.dev/blog/announcing-vite8)
+- [Vite 공식 문서 — Migration from v7](https://vite.dev/guide/migration)
+- [Vite 공식 블로그 — Vite 8.1 is out!](https://vite.dev/blog/announcing-vite8-1)
+- [Rolldown 문서 — Ambiguous default import from CJS modules](https://rolldown.rs/in-depth/bundling-cjs#ambiguous-default-import-from-cjs-modules)
+- [vitejs/vite #22746 — Bundled dev mode design doc and Road Map](https://github.com/vitejs/vite/discussions/22746)

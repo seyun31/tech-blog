@@ -74,6 +74,11 @@ body {
   line-height: 1.4;
 }
 
+.prose h2,
+.prose h3 {
+  scroll-margin-top: 5rem;
+}
+
 .prose h3 {
   font-size: 1.25rem;
   font-weight: 600;
