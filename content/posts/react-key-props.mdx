@@ -1,0 +1,306 @@
+---
+title: "index를 key로 쓰면 왜 상태가 엉뚱한 항목에 붙을까: React key props"
+description: "알림 목록 맨 위에 새 알림이 도착했더니 읽음 표시가 다른 알림으로 옮겨가는 버그를 재현하고, React가 key로 컴포넌트를 식별하는 과정을 트리 단위로 따라가 봅니다. 어떤 값을 key로 써야 하는지, key를 바꿔 상태를 초기화하는 활용법과 그 비용까지 정리했습니다."
+date: "2026-10-02"
+category: "Engineering"
+tags: ["React"]
+thumbnail: ""
+---
+
+## 🪄 경고만 없애려고 넣었던 `key={index}`
+
+배열을 `map`으로 렌더링하면 개발 모드 콘솔에 이런 경고가 뜬다. (React 18까지는 앞에 `Warning:`이 붙었다.)
+
+```
+Each child in a list should have a unique "key" prop.
+```
+
+화면은 멀쩡히 나오니 그냥 넘어가거나, 가장 손쉬운 값인 배열의 index를 넣어 경고를 없앤 적이 한 번쯤은 있을 것이다.
+
+```jsx
+{notifications.map((message, index) => (
+  <NotificationItem key={index} message={message} />
+))}
+```
+
+경고는 사라진다. 그런데 이 코드는 **리스트의 순서가 바뀌는 순간** 버그를 만든다.
+
+> 이 글의 주장은 하나다. key는 경고를 없애는 값이 아니라 **컴포넌트의 식별자**다. React는 같은 부모 아래에서 타입과 key가 모두 같으면 같은 컴포넌트로 보고 상태를 이어 붙이고, key가 다르면 다른 컴포넌트로 보고 새로 만든다.
+
+---
+
+## 💥 재현: 새 알림이 왔더니 읽음 표시가 옮겨갔다
+
+각 알림이 자기 읽음 여부를 state로 들고 있는 알림 목록이다. 새 알림은 항상 **맨 위에** 쌓인다.
+
+```jsx
+function NotificationItem({ message }) {
+  const [isRead, setIsRead] = useState(false);
+
+  return (
+    <li className={isRead ? "read" : ""}>
+      <button onClick={() => setIsRead(true)}>
+        {isRead ? "읽음" : "새 알림"} · {message}
+      </button>
+    </li>
+  );
+}
+
+function NotificationList() {
+  const [notifications, setNotifications] = useState([
+    "PR에 리뷰가 달렸습니다",
+    "배포가 완료되었습니다",
+    "회의가 10분 뒤 시작됩니다",
+  ]);
+
+  const receive = () =>
+    setNotifications((prev) => ["빌드가 실패했습니다", ...prev]);
+
+  return (
+    <>
+      <button onClick={receive}>새 알림 받기</button>
+      <ul>
+        {notifications.map((message, index) => (
+          <NotificationItem key={index} message={message} />
+        ))}
+      </ul>
+    </>
+  );
+}
+```
+
+1. 맨 위의 "PR에 리뷰가 달렸습니다"를 눌러 읽음 처리한다.
+2. "새 알림 받기"를 눌러 "빌드가 실패했습니다"를 **맨 앞에** 넣는다.
+
+기대한 화면은 읽지 않은 "빌드 실패" 알림이 맨 위에 생기고, "PR 리뷰" 알림은 읽음인 채로 한 칸 내려가는 것이다. 실제 결과는 다르다.
+
+| 위치 | 기대 | 실제 |
+| --- | --- | --- |
+| 0 | 빌드 실패 (새 알림) | ❌ 빌드 실패 (**읽음**) |
+| 1 | PR 리뷰 (읽음) | ❌ PR 리뷰 (**새 알림**) |
+| 2 | 배포 완료 (새 알림) | 배포 완료 (새 알림) |
+| 3 | 회의 시작 (새 알림) | 회의 시작 (새 알림) |
+
+방금 도착한 알림은 보지도 않았는데 읽음으로 나오고, 이미 읽은 알림은 다시 새 알림이 됐다. 가장 급한 "빌드 실패"를 놓치게 만드는 버그다. **읽음 상태가 알림을 따라가지 않고 자리에 남아 있다.**
+
+**"읽음 여부를 부모 데이터로 올리면 되지 않나?"**
+
+맞다. 실무라면 `isRead`는 알림 데이터에 들어갈 값이다. 여기서는 문제를 드러내려고 일부러 항목 내부 state로 뒀다. 하지만 state를 올려도 끝나지 않는다. 입력 중인 값, 포커스, 펼침 여부, 진행 중인 애니메이션처럼 **항목이 스스로 들고 있을 수밖에 없는 상태**는 똑같은 방식으로 옆 항목에 옮겨붙는다.
+
+---
+
+## 🔍 원인: key는 컴포넌트의 이름표다
+
+React 공식 문서는 key를 이렇게 설명한다. key는 각 컴포넌트가 어떤 배열 항목에 대응하는지 React에 알려주고, 항목이 이동하거나 삽입, 삭제될 때 식별자 역할을 한다.
+
+**교실로 비유하면**
+
+React를 선생님, 컴포넌트를 학생, state를 채점한 시험지라고 해보자.
+
+- 선생님이 시험지 주인을 이름 대신 "**맨 앞자리** 학생"이라고만 적어뒀다.
+- 시험지를 돌려주기 전에 전학생이 와서 맨 앞자리에 앉고, 나머지는 한 칸씩 뒤로 밀렸다.
+- 선생님은 적어둔 대로 맨 앞자리에 시험지를 건넨다. 시험을 보지도 않은 전학생이 받는다.
+
+"맨 앞자리"가 index이고, 자리가 바뀌어도 변하지 않는 **학번**이 고유한 key다. 학번으로 적어뒀다면 자리가 어떻게 바뀌든 시험지는 주인에게 간다.
+
+**트리에서 실제로 일어나는 일**
+
+React는 컴포넌트를 트리로 관리하고, 다시 렌더링할 때 이전 트리와 새 트리를 비교해 바뀐 부분을 찾는다. 같은 부모 아래 형제들끼리는 **key가 같은 것끼리 짝을 짓는다.**
+
+새 알림이 오기 전의 트리는 이렇다.
+
+```
+<NotificationList>
+├─ <NotificationItem key=0>  message: PR 리뷰     isRead: true
+├─ <NotificationItem key=1>  message: 배포 완료   isRead: false
+└─ <NotificationItem key=2>  message: 회의 시작   isRead: false
+```
+
+"빌드 실패"가 배열 맨 앞에 들어오면 모든 항목의 index가 하나씩 밀린다. index를 key로 쓰고 있으니 **key도 같이 밀린다.** React는 새 key를 들고 이전 트리에서 짝을 찾는다.
+
+| 새 항목 | 새 key | 이전 트리에서 찾은 짝 | 결과 |
+| --- | --- | --- | --- |
+| 빌드 실패 | 0 | key 0 (PR 리뷰, `isRead: true`) | 재사용, message만 교체 → **읽음 처리된 빌드 실패** |
+| PR 리뷰 | 1 | key 1 (배포 완료, `isRead: false`) | 재사용, message만 교체 → **새 알림이 된 PR 리뷰** |
+| 배포 완료 | 2 | key 2 (회의 시작, `isRead: false`) | 재사용, message만 교체 |
+| 회의 시작 | 3 | 없음 | **새로 생성**, state는 초깃값 |
+
+React 입장에서는 틀린 게 없다. key가 0인 컴포넌트는 여전히 key가 0인 컴포넌트이고, props인 `message`만 바뀌었을 뿐이다. state는 컴포넌트에 붙어 있으므로 그대로 유지된다.
+
+- **props**(`message`)는 매번 새로 내려오니 올바른 값으로 바뀐다.
+- **state**(`isRead`)는 컴포넌트에 남아 있으니 자리를 지킨다.
+
+그래서 화면에는 글자만 한 칸씩 밀리고 읽음 표시는 제자리에 남는다. 실제로 맨 앞에 새로 생긴 건 "빌드 실패"인데, React가 새로 만든 컴포넌트는 맨 끝의 "회의 시작"이다.
+
+상태 버그만 생기는 것도 아니다. 알림 하나가 끼어들었을 뿐인데 React는 기존 `<li>` 3개의 텍스트를 전부 고치고 끝에 하나를 덧붙인다. **DOM 작업도 필요 이상으로 늘어난다.**
+
+> index는 "항목"이 아니라 "위치"를 가리킨다. 위치가 바뀌면 key가 바뀌고, 상태는 엉뚱한 항목에 붙는다.
+
+---
+
+## ✅ 해결: 항목과 함께 움직이는 값을 key로
+
+학생마다 학번이 있듯이, 각 알림에 고유한 id를 주고 그 값을 key로 쓴다.
+
+```jsx
+function NotificationList() {
+  const [notifications, setNotifications] = useState([
+    { id: "n-103", message: "PR에 리뷰가 달렸습니다" },
+    { id: "n-102", message: "배포가 완료되었습니다" },
+    { id: "n-101", message: "회의가 10분 뒤 시작됩니다" },
+  ]);
+
+  const receive = () =>
+    setNotifications((prev) => [
+      { id: crypto.randomUUID(), message: "빌드가 실패했습니다" },
+      ...prev,
+    ]);
+
+  return (
+    <>
+      <button onClick={receive}>새 알림 받기</button>
+      <ul>
+        {notifications.map((n) => (
+          <NotificationItem key={n.id} message={n.message} />
+        ))}
+      </ul>
+    </>
+  );
+}
+```
+
+같은 순서로 다시 눌러보면 짝이 이렇게 지어진다.
+
+| 새 항목 | key | 이전 트리에서 찾은 짝 | 결과 |
+| --- | --- | --- | --- |
+| 빌드 실패 | (새 id) | 없음 | **새로 생성**, 새 알림 |
+| PR 리뷰 | n-103 | n-103 (`isRead: true`) | 재사용, **읽음 유지** |
+| 배포 완료 | n-102 | n-102 | 재사용 |
+| 회의 시작 | n-101 | n-101 | 재사용 |
+
+위치는 바뀌었지만 key는 그대로라서, React가 같은 알림이라고 판단할 수 있다. DOM에서도 기존 `<li>` 3개는 그대로 두고 새 노드 하나만 맨 앞에 끼워 넣는다.
+
+주의할 점은 id를 **항목을 만들 때 한 번** 정해야 한다는 것이다. 렌더링 중에 만들면 안 된다.
+
+```jsx
+// ❌ 렌더링할 때마다 key가 바뀐다 → 매번 전부 새로 만들고 state가 모두 날아간다
+<NotificationItem key={Math.random()} message={n.message} />
+```
+
+---
+
+## 🤔 React는 왜 key가 필요할까
+
+두 트리를 "정확하게" 비교하려면 어떤 노드가 추가됐는지, 삭제됐는지, 위치만 바뀌었는지를 모든 경우에 대해 따져야 한다. 이렇게 최소 변경을 구하는 알고리즘은 비용이 **O(n³)** 까지 커진다. 노드가 1,000개면 10억 번 수준의 연산이고, 버튼을 누를 때마다 이 비교를 하면 화면이 버벅일 수밖에 없다.
+
+React는 정확한 비교를 포기하고 두 가지 가정으로 비용을 **O(n)** 으로 줄였다.
+
+- **타입이 다르면** 다른 트리로 보고 통째로 새로 만든다.
+- **같은 레벨의 형제끼리만**, 순서대로 비교한다.
+
+O(n)은 이 가정에서 나오는 것이지 key 덕분이 아니다. key가 없어도 React는 O(n)으로 돈다. 대신 순서대로만 비교해서는 "맨 앞에 하나가 끼어들었다"와 "모든 항목의 내용이 바뀌었다"를 구분할 수 없다. **그 구분을 가능하게 해 주는 힌트가 key다.**
+
+힌트가 맞도록 **안정적인 key를 넘겨주는 책임은 개발자**에게 있다. index를 key로 준다는 건 "같은 위치면 같은 항목"이라고 React에 말하는 것이고, 순서가 바뀌는 리스트에서는 그 말이 거짓이 된다.
+
+---
+
+## 🔑 어떤 값을 key로 써야 할까
+
+**1. 서버가 내려주는 고유한 값**
+
+DB의 id처럼 데이터에 이미 있는 식별자가 가장 안전하다.
+
+**2. 하나로 유일하지 않다면 조합**
+
+같은 상품을 옵션만 달리해 여러 줄 담을 수 있는 장바구니라면 상품 id만으로는 겹친다. 옵션 id와 묶는다.
+
+```jsx
+<CartItem key={`${productId}-${optionId}`} />
+```
+
+**3. 클라이언트에서 만든 항목이라면 생성 시점에 id 발급**
+
+위 해결 코드처럼 `crypto.randomUUID()`나 증가하는 카운터로 **추가할 때** 만들어 데이터에 넣어둔다. 두 가지를 알아두면 좋다.
+
+- `crypto.randomUUID()`는 HTTPS나 localhost 같은 secure context에서만 존재한다. `http://192.168.x.x`로 실기기 테스트를 하면 `undefined`라서 터진다.
+- 임시 id로 먼저 그려두고 서버 응답이 오면 서버 id로 바꾸는 낙관적 업데이트에서는, **key가 바뀌는 순간 컴포넌트가 새로 만들어진다.** 입력 중이던 값이 날아갈 수 있으니 key용 id는 따로 유지한다.
+
+**자주 놓치는 규칙**
+
+- key는 **형제 사이에서만** 유일하면 된다. 서로 다른 리스트에서 같은 key를 써도 상관없다.
+- key는 `map`이 반환하는 **가장 바깥 요소**에 단다. `NotificationItem` 안의 `<li>`가 아니라 `<NotificationItem>`에 단다.
+- key는 props로 전달되지 않는다. 컴포넌트 안에서 `props.key`는 `undefined`다. 값이 필요하면 `id` 같은 다른 이름으로 한 번 더 넘긴다.
+- 한 항목이 여러 요소를 반환하면 `<>`에는 key를 줄 수 없으니 `<Fragment key={id}>`를 쓴다.
+
+**그럼 index는 절대 쓰면 안 될까?**
+
+쓸 수 있는 고유한 id가 있다면 고민할 필요 없이 id를 쓴다. id가 없을 때, 아래 두 조건을 **모두** 만족하면 index를 써도 안전하다.
+
+- 리스트의 순서가 바뀌지 않는다. 추가, 삭제뿐 아니라 **정렬과 필터링**도 순서를 바꾼다.
+- 각 항목이 따로 유지하는 상태가 없다. 자기 state뿐 아니라 **자식 컴포넌트의 state와 DOM이 들고 있는 상태**(비제어 `<input>`의 입력값, 포커스, 스크롤, 트랜지션)까지 포함이다.
+
+별점을 나타내는 별 아이콘 5개나, 로딩 중에 보여주는 스켈레톤 줄이 여기에 해당한다.
+
+참고로 key를 주지 않으면 React는 형제를 순서대로 짝짓는다. 결과적으로 `key={index}`와 같은 방식이다. 즉 `key={index}`는 **경고만 숨길 뿐 문제는 그대로 남는다.**
+
+---
+
+## 💡 활용: key를 바꿔서 일부러 초기화하기
+
+지금까지는 "바뀌지 않는 값을 key로 써야 한다"는 이야기였다. 뒤집으면 **key를 바꿔서 컴포넌트를 의도적으로 새로 시작**하게 만들 수 있다.
+
+상품 상세 페이지에서 다른 상품으로 넘어가면 골라둔 옵션과 수량을 초기화해야 한다고 하자. useEffect로 풀면 이렇게 된다.
+
+```jsx
+function OptionPicker({ productId }) {
+  const [size, setSize] = useState(null);
+  const [quantity, setQuantity] = useState(1);
+
+  useEffect(() => {
+    setSize(null);
+    setQuantity(1);
+  }, [productId]);
+  // ...
+}
+```
+
+- 새 `productId`에 **이전 상품의 옵션과 수량이 섞인 화면이 먼저 한 번 그려진 뒤에야** 초기화된다. effect는 화면이 그려진 다음에 실행되기 때문이다. 렌더링이 한 번 더 일어나는 것은 덤이다.
+- state를 하나라도 빼먹으면 이전 상품에서 고른 값이 남는 버그가 된다.
+- state가 추가될 때마다 초기화 로직도 같이 고쳐야 한다.
+
+key를 쓰면 초기화 코드가 필요 없다.
+
+```jsx
+<OptionPicker key={productId} productId={productId} />
+```
+
+`productId`가 바뀌면 React는 이 컴포넌트를 이전 것과 **다른 컴포넌트**로 판단한다. 기존 컴포넌트는 unmount되고 새 컴포넌트가 mount되면서 내부 state가 전부 초깃값으로 시작한다. 섞인 화면이 그려지는 일도 없다. [useEffect 글](/blog/react-useeffect)에서 다룬 "effect 안에서 state를 바꾸면 렌더링이 한 번 더 일어난다"는 문제를 피하는 방법이기도 하다.
+
+key의 영향을 받는 건 state만이 아니다. **ref, effect, DOM 노드**(입력 중이던 값, 포커스, 스크롤 위치)도 컴포넌트에 연결되어 있으므로 key가 바뀌면 함께 새로 만들어진다. effect의 clean-up이 실행되고 다시 등록된다는 뜻이기도 하다.
+
+**만능은 아니다**
+
+- key가 바뀌면 그 아래 **서브트리 전체**가 unmount되고 다시 mount된다. DOM을 새로 만들고, 하위 컴포넌트의 effect(데이터 패칭 포함)가 전부 다시 실행된다. 무거운 트리의 바깥쪽에 걸면 비용이 크다.
+- 전부 아니면 전무다. state 중 일부만 초기화하고 나머지는 유지하고 싶다면 맞지 않는다.
+
+초기화할 범위만 감싸도록 key를 거는 위치를 좁게 잡는 게 좋다.
+
+---
+
+## 📝 정리
+
+- key는 경고를 없애는 값이 아니라 **컴포넌트의 식별자**다. 같은 부모 아래에서 타입과 key가 같으면 같은 컴포넌트, 다르면 다른 컴포넌트다.
+- index는 항목이 아니라 **위치**를 가리킨다. 순서가 바뀌면 state가 엉뚱한 항목에 붙고 DOM 작업도 늘어난다.
+- React는 트리 비교를 O(n)으로 끝내려고 형제를 순서대로만 비교한다. key는 그 과정에서 항목의 정체를 알려주는 유일한 힌트이므로 **안정적이고 고유한 값**을 줘야 한다.
+- index는 id가 없고, 순서가 바뀌지 않고, 항목에 상태가 없을 때만 쓴다.
+- 반대로 key를 바꾸면 컴포넌트를 통째로 초기화할 수 있다. useEffect로 state를 하나씩 되돌리는 것보다 안전하지만, 서브트리 전체를 다시 만드는 비용이 따른다.
+
+---
+
+**참고**
+
+- [[10분 테코톡] 두부의 React key props](https://youtu.be/KI2oWPz6FEQ) - 우아한테크
+- [Rendering Lists](https://react.dev/learn/rendering-lists) - React 공식 문서
+- [Preserving and Resetting State](https://react.dev/learn/preserving-and-resetting-state) - React 공식 문서
+- [You Might Not Need an Effect](https://react.dev/learn/you-might-not-need-an-effect) - React 공식 문서
+- [Reconciliation](https://legacy.reactjs.org/docs/reconciliation.html) - React 레거시 문서 (O(n³), O(n) 수치의 출처)
