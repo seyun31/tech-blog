@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Post } from "@/lib/types";
+import { DiscussionStats } from "@/lib/discussions";
 import { CommentsSkeleton } from "@/components/Skeleton";
 
 interface Comment {
@@ -16,10 +17,19 @@ interface Comment {
 
 interface SidebarProps {
   posts: Post[];
+  stats: DiscussionStats;
 }
 
-export default function Sidebar({ posts }: SidebarProps) {
-  const popular = posts.slice(0, 5);
+const POPULAR_COUNT = 3;
+
+export default function Sidebar({ posts, stats }: SidebarProps) {
+  // 좋아요 + 댓글 수가 많은 순 (동점이면 최신 글 우선, 반응이 없는 글은 제외)
+  const score = (post: Post) =>
+    (stats[post.slug]?.reactions ?? 0) + (stats[post.slug]?.comments ?? 0);
+  const popular = posts
+    .filter((post) => score(post) > 0)
+    .sort((a, b) => score(b) - score(a))
+    .slice(0, POPULAR_COUNT);
   const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -60,7 +70,7 @@ export default function Sidebar({ posts }: SidebarProps) {
             </li>
           ))}
           {popular.length === 0 && (
-            <li className="text-sm text-muted">아직 글이 없습니다.</li>
+            <li className="text-sm text-muted">아직 인기 있는 글이 없습니다.</li>
           )}
         </ol>
       </div>

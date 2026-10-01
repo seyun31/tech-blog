@@ -182,7 +182,7 @@ export default function HomeContent({ posts, stats }: HomeContentProps) {
         {/* 사이드 바 */}
         <div className="hidden w-60 shrink-0 lg:block">
           <div className="sticky top-20">
-            <Sidebar posts={posts} />
+            <Sidebar posts={posts} stats={stats} />
           </div>
         </div>
       </div>
