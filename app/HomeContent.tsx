@@ -8,7 +8,7 @@ import Sidebar from "@/components/Sidebar";
 import { Post } from "@/lib/types";
 import { DiscussionStats } from "@/lib/discussions";
 
-const CATEGORIES = ["All", "Engineering", "AI", "UI/UX", "CS", "Etc"];
+const CATEGORIES = ["All", "Frontend", "Build & Tools", "Testing"];
 const PAGE_SIZE = 5;
 
 interface HomeContentProps {

@@ -33,8 +33,7 @@ export default function TableOfContents({ items }: TableOfContentsProps) {
   return (
     <nav
       aria-label="목차"
-      className="fixed top-28 hidden max-h-[calc(100vh-10rem)] w-56 overflow-y-auto min-[1400px]:block"
-      style={{ left: "calc(50% + 28rem + 2rem)" }}
+      className="sticky top-28 mt-10 max-h-[calc(100vh-10rem)] overflow-y-auto"
     >
       <p className="mb-3 text-sm font-bold text-foreground">목차</p>
       <ul className="flex flex-col gap-2.5 border-l border-border">

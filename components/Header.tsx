@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
 
 export default function Header() {
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
+  const isPost = usePathname().startsWith("/blog/");
 
   useEffect(() => {
     setMounted(true);
@@ -14,7 +16,11 @@ export default function Header() {
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border bg-background/80 backdrop-blur-sm">
-      <div className="mx-auto flex h-14 max-w-4xl items-center justify-between px-6">
+      <div
+        className={`mx-auto flex h-14 max-w-4xl items-center justify-between px-6 ${
+          isPost ? "xl:max-w-[73rem]" : ""
+        }`}
+      >
         <Link href="/" className="text-lg md:text-2xl font-bold tracking-tight" style={{ fontFamily: "JejuDoldam, sans-serif" }}>
           seyun.tech
         </Link>

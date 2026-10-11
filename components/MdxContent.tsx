@@ -3,12 +3,16 @@ import rehypePrettyCode from "rehype-pretty-code";
 import rehypeSlug from "rehype-slug";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
+import Bookmark from "./Bookmark";
+import CommitHelperFlow from "./diagrams/CommitHelperFlow";
 
 interface MdxContentProps {
   source: string;
 }
 
 const mdxComponents = {
+  Bookmark,
+  CommitHelperFlow,
   strong: (props: React.ComponentProps<"strong">) => (
     <strong style={{ fontWeight: 700 }} {...props} />
   ),
