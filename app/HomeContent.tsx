@@ -74,7 +74,7 @@ export default function HomeContent({ posts, stats }: HomeContentProps) {
   }, []);
 
   return (
-    <div className="flex flex-col gap-10">
+    <div className="flex flex-col gap-10 xl:-mx-[8.5rem]">
       {/* 메인 배너 부분(최신 3개 글) */}
       {featuredPosts.length > 0 && (
         <div className="overflow-hidden">
