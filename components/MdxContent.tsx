@@ -16,6 +16,13 @@ const mdxComponents = {
   strong: (props: React.ComponentProps<"strong">) => (
     <strong style={{ fontWeight: 700 }} {...props} />
   ),
+  img: ({ title, ...props }: React.ComponentProps<"img">) => (
+    <span className="figure">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img {...props} alt={props.alt ?? ""} />
+      {title && <span className="figure-caption">{title}</span>}
+    </span>
+  ),
   blockquote: (props: React.ComponentProps<"blockquote">) => (
     <blockquote style={{ fontStyle: "normal" }} {...props} />
   ),

@@ -180,9 +180,27 @@ body {
 }
 
 .prose img {
+  display: block;
   border-radius: 0.5rem;
-  margin-top: 1rem;
-  margin-bottom: 1rem;
+  margin: 1rem auto;
+}
+
+.prose .figure {
+  display: table;
+  margin: 1rem auto;
+}
+
+.prose .figure img {
+  margin: 0;
+}
+
+.prose .figure-caption {
+  display: table-caption;
+  caption-side: bottom;
+  margin-top: 0.5rem;
+  text-align: center;
+  font-size: 0.875rem;
+  color: var(--muted);
 }
 
 .prose code {

@@ -4,7 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node scripts/image-metadata.mjs",
     "build": "next build",
+    "images:check": "node scripts/image-metadata.mjs",
+    "images:strip": "node scripts/image-metadata.mjs --fix",
     "start": "next start",
     "lint": "eslint"
   },
